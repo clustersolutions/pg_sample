@@ -192,6 +192,8 @@ use Getopt::Long qw/ GetOptions :config no_ignore_case /;
 use DBI;
 use DBD::Pg 2.0.0;
 
+use Data::Dumper;
+
 $SIG{TERM} = $SIG{INT} = $SIG{QUIT} = $SIG{HUP} = sub {
   my $signal = shift;
   die "Received signal '$signal'; cleaning up and terminating.\n";
@@ -422,6 +424,8 @@ $opt{db_name}  ||= shift() || $ENV{PGDATABASE} || $opt{db_user};
 $opt{db_host}  ||= $ENV{PGHOST} if defined $ENV{PGHOST};
 $opt{db_port}  ||= $ENV{PGPORT} if defined $ENV{PGPORT};
 $opt{encoding} ||= $ENV{PGCLIENTENCODING} if defined $ENV{PGCLIENTENCODING};
+
+print Dumper(\%opt); 
 
 my $dbh = connect_db(%opt) or croak "unable to connect to database";
 
