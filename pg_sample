@@ -191,6 +191,7 @@ use Carp;
 use Getopt::Long qw/ GetOptions :config no_ignore_case /;
 use DBI;
 use DBD::Pg 2.0.0;
+use List::Util 1.33 'any';
 
 use Data::Dumper;
 
@@ -499,11 +500,13 @@ notice "[limit] $_->[0] = $_->[1]\n" foreach @limits;
 # create copies of each table in a separate schema and insert no
 # more than --limit rows initially.
 my @tables;
+my @dump_schemas("public","analytics","audit","marketing","report");
 my %sample_tables; # real table name -> sample table name
 my $sth = $dbh->table_info(undef, undef, undef, 'TABLE');
 while (my $row = lower_keys($sth->fetchrow_hashref)) {
   next unless uc $row->{table_type} eq 'TABLE'; # skip SYSTEM TABLE values
-  next if $row->{table_schem} eq 'information_schema'; # special pg schema
+  #next if $row->{table_schem} eq 'information_schema'; # special pg schema
+  next unless( if any { /$row->{table_schem}/ } @dump_schemas );
 
   my $sname = $row->{pg_schema} || unquote_identifier($row->{TABLE_SCHEM})
     or die "no pg_schema or TABLE_SCHEM value?!";
