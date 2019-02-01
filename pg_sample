@@ -116,6 +116,10 @@ increase the running time of the script.
 
 The schema name to use for the sample database (defaults to _pg_sample).
 
+=item B<--dumpschema=>I<dumpschema>
+
+Dump only schemas matching I<dumpschema> in a comma separated list.
+
 =item B<--trace>
 
 Turn on Perl DBI tracing. See the DBI module documentation for details.
@@ -397,6 +401,7 @@ GetOptions(\%opt,
   "limit=s@",
   "random",
   "schema=s",
+  "dumpschema=s",
   "trace",
   "verbose|v",
   "version|V",
@@ -495,16 +500,18 @@ foreach my $limit (grep { /\S/ } map { split /\s*,\s*/ } list($opt{limit})) {
 }
 notice "[limit] $_->[0] = $_->[1]\n" foreach @limits;
 
+# parse dumpschema
+my @dump_schemas = split /,/, $opt{dumpschema};
+
 # create copies of each table in a separate schema and insert no
 # more than --limit rows initially.
 my @tables;
-my @dump_schemas = ("public","analytics","audit","marketing","report");
 my %sample_tables; # real table name -> sample table name
 my $sth = $dbh->table_info(undef, undef, undef, 'TABLE');
 while (my $row = lower_keys($sth->fetchrow_hashref)) {
   next unless uc $row->{table_type} eq 'TABLE'; # skip SYSTEM TABLE values
-  #next if $row->{table_schem} eq 'information_schema'; # special pg schema
-  next unless( /$row->{table_schem}/ ~~ @dump_schemas );
+  next if $row->{table_schem} eq 'information_schema'; # special pg schema
+  if (scalar @dump_schemas > 0) { next unless( /$row->{table_schem}/ ~~ @dump_schemas ); }
 
   my $sname = $row->{pg_schema} || unquote_identifier($row->{TABLE_SCHEM})
     or die "no pg_schema or TABLE_SCHEM value?!";
@@ -563,7 +570,7 @@ while (my $row = lower_keys($sth->fetchrow_hashref)) {
     next;
   }
 
-  if (!( /$row->{table_schem}/ ~~ @dump_schemas )) {
+  if ((scalar @dump_schemas > 0) && !( /$row->{table_schem}/ ~~ @dump_schemas )) {
     print "--schema excluded: $sname.$tname\n";
     $dbh->do(qq{
       CREATE $unlogged TABLE $sample_table AS
@@ -606,7 +613,7 @@ foreach my $table (@tables) {
   while (my $row = lower_keys($sth->fetchrow_hashref)) {
     my $target_col = $row->{uk_column_name} or croak "no uk_column_name?!";
 
-    next unless( /$row->{fk_table_schem}/ ~~ @dump_schemas );
+    if (scalar @dump_schemas > 0) { next unless( /$row->{fk_table_schem}/ ~~ @dump_schemas ); }
 
     my $fk_table = Table->new(
       unquote_identifier($row->{fk_table_schem}),
