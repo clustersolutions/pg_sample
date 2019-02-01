@@ -89,7 +89,7 @@ apply to matching tables. Examples:
 
   # include all rows from the users table
   --limit="users = *"
- 
+
   # include 1,000 rows from users table
   --limit="users = 1000"
 
@@ -191,8 +191,6 @@ use Carp;
 use Getopt::Long qw/ GetOptions :config no_ignore_case /;
 use DBI;
 use DBD::Pg 2.0.0;
-use List::Util 1.33 'any';
-
 use Data::Dumper;
 
 $SIG{TERM} = $SIG{INT} = $SIG{QUIT} = $SIG{HUP} = sub {
@@ -203,26 +201,26 @@ $SIG{TERM} = $SIG{INT} = $SIG{QUIT} = $SIG{HUP} = sub {
 BEGIN {
   # Encapsulate a fully-qualified Postgresql table name
   package Table;
-  
+
   use strict;
   use Carp;
   use overload '""' => 'quoted'; # interpolation results in quoted version
- 
+
   *dbh = \&main::connect_db;
-  
+
   sub new {
     my $class = shift;
-  
+
     $class = ref($class) || $class;
     return bless {
       schema => shift,
       table => shift,
     };
   }
-  
+
   sub quoted {
     my $self = shift;
-  
+
     return $self->dbh->quote_identifier(
       undef,
       $self->{schema},
@@ -236,34 +234,34 @@ BEGIN {
 
     return join '.', $self->{schema}, $self->{table};
   }
-  
+
   sub schema {
     my $self = shift;
-  
+
     $self->{schema} = shift if @_;
     return $self->{schema};
   }
-  
+
   sub table {
     my $self = shift;
-  
+
     $self->{table} = shift if @_;
     return $self->{table};
   }
-  
+
   sub DESTROY {}
-  
+
   sub AUTOLOAD {
     my $self = shift;
-  
+
     our $AUTOLOAD;
     $AUTOLOAD =~ s/.*:://g;
-  
+
     if ($AUTOLOAD =~ /^quoted_(.+)$/) {
       my $method = $1;
       return $self->dbh->quote_identifier($self->$method);
     }
-  
+
     croak "Can't locate object method \"$AUTOLOAD\" via package " .
           __PACKAGE__;
   }
@@ -286,7 +284,7 @@ my %opt; # closure; all functions have access to options
       $opt{db_host} ? "host=$opt{db_host}" : (),
       $opt{db_port} ? "port=$opt{db_port}" : (),
     ;
-  
+
     $dbh = DBI->connect(
       $dsn,
       $opt{db_user},
@@ -299,9 +297,9 @@ my %opt; # closure; all functions have access to options
         HandleError      => sub { confess( shift ) },
       },
     ) or croak "db connection failed!";
-  
+
     $dbh->trace(1) if defined $opt{trace};
-  
+
     return $dbh;
   }
 }
@@ -426,7 +424,7 @@ $opt{db_host}  ||= $ENV{PGHOST} if defined $ENV{PGHOST};
 $opt{db_port}  ||= $ENV{PGPORT} if defined $ENV{PGPORT};
 $opt{encoding} ||= $ENV{PGCLIENTENCODING} if defined $ENV{PGCLIENTENCODING};
 
-print Dumper(\%opt); 
+#print Dumper(\%opt);
 
 my $dbh = connect_db(%opt) or croak "unable to connect to database";
 
@@ -437,7 +435,7 @@ if ($opt{schema} eq 'public') {
 }
 
 my ($schema_oid) = $dbh->selectrow_array(qq{
-  SELECT oid 
+  SELECT oid
     FROM pg_catalog.pg_namespace
    WHERE nspname = ?
 }, undef, $opt{schema});
@@ -500,13 +498,13 @@ notice "[limit] $_->[0] = $_->[1]\n" foreach @limits;
 # create copies of each table in a separate schema and insert no
 # more than --limit rows initially.
 my @tables;
-my @dump_schemas("public","analytics","audit","marketing","report");
+my @dump_schemas = ("public","analytics","audit","marketing","report");
 my %sample_tables; # real table name -> sample table name
 my $sth = $dbh->table_info(undef, undef, undef, 'TABLE');
 while (my $row = lower_keys($sth->fetchrow_hashref)) {
   next unless uc $row->{table_type} eq 'TABLE'; # skip SYSTEM TABLE values
   #next if $row->{table_schem} eq 'information_schema'; # special pg schema
-  next unless( if any { /$row->{table_schem}/ } @dump_schemas );
+  next unless( /$row->{table_schem}/ ~~ @dump_schemas );
 
   my $sname = $row->{pg_schema} || unquote_identifier($row->{TABLE_SCHEM})
     or die "no pg_schema or TABLE_SCHEM value?!";
@@ -531,7 +529,7 @@ while (my $row = lower_keys($sth->fetchrow_hashref)) {
     if ($_->[1] eq '*') { # include all rows
       $limit = '';
     } elsif ($_->[1] =~ /^\d+$/) { # numeric value turned into LIMIT
-      $limit = "LIMIT $_->[1]"; 
+      $limit = "LIMIT $_->[1]";
     } else { # otherwise treated as subselect
       $where = "($_->[1])";
     }
@@ -540,7 +538,43 @@ while (my $row = lower_keys($sth->fetchrow_hashref)) {
   }
   # warn "\n[LIMIT] $table WHERE $where $limit\n";
 
-  my $order = $opt{random} ? 'ORDER BY random()' : '';
+  my ($table_row_count, $sort_column) = $dbh->selectrow_array(qq{ SELECT a.reltuples, b.column_name FROM
+        (SELECT   nspname AS schemaname, relname, reltuples::numeric
+          FROM pg_class C LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
+          WHERE   nspname NOT IN ('pg_catalog', 'information_schema')
+          AND  relkind='r' AND nspname IN ('analytics','audit','report','marketing','public')) a,
+        (SELECT table_schema, table_name, column_name, ordinal_position, column_default
+            FROM information_schema.columns
+            WHERE column_default LIKE '%nextval%'
+            AND table_schema IN ('public','analytics','audit','report','marketing')) b
+        WHERE a.schemaname = b.table_schema
+        AND a.relname = b.table_name
+        AND a.schemaname = '$sname'
+        AND a.relname = '$tname' });
+
+  if (!(defined $sort_column && $sort_column ne '')) {
+    print "--sort_column error: $sname.$tname\n";
+    $dbh->do(qq{
+      CREATE $unlogged TABLE $sample_table AS
+             SELECT *
+               FROM $table
+             WHERE 1 = 2
+    });
+    next;
+  }
+
+  if (!( /$row->{table_schem}/ ~~ @dump_schemas )) {
+    print "--schema excluded: $sname.$tname\n";
+    $dbh->do(qq{
+      CREATE $unlogged TABLE $sample_table AS
+             SELECT *
+               FROM $table
+             WHERE 1 = 2
+    });
+    next;
+  }
+
+  my $order = $opt{random} ? 'ORDER BY random()' : "ORDER BY $sort_column DESC";
 
   $dbh->do(qq{
     CREATE $unlogged TABLE $sample_table AS
@@ -571,6 +605,9 @@ foreach my $table (@tables) {
   my %fks;
   while (my $row = lower_keys($sth->fetchrow_hashref)) {
     my $target_col = $row->{uk_column_name} or croak "no uk_column_name?!";
+
+    next unless( /$row->{fk_table_schem}/ ~~ @dump_schemas );
+
     my $fk_table = Table->new(
       unquote_identifier($row->{fk_table_schem}),
       unquote_identifier($row->{fk_table_name}),
@@ -581,14 +618,15 @@ foreach my $table (@tables) {
     $fks{ $fk_name } ||= [$fk_table, $table];
     push @{ $fks{ $fk_name } }, [$fk_col, $target_col];
   }
+
   push @fks, values %fks;
 }
 
 # create indexes on sample table FKs
 my $idx = 0;
+
 foreach my $fk (@fks) {
   my ($fk_table, $table, @pairs) = @$fk;
-
   my $sample_fk_table = $sample_tables{ $fk_table };
   my $idx_name = $dbh->quote_identifier($opt{schema} . '_idx' . ++$idx);
   my $fk_cols = join ', ', map { $_->[0] } @pairs;
@@ -616,7 +654,7 @@ while ($num_rows) {
       map { "t1.$_->[1] = s1.$_->[1]" } @pairs;
 
     my $where = join ' AND ',
-      map { "s1.$_->[1] IS NULL" } @pairs; 
+      map { "s1.$_->[1] IS NULL" } @pairs;
 
     # Insert into the sample table all the rows needed to
     # satisfy the fk table, except those already present.
@@ -646,7 +684,7 @@ while ($num_rows) {
     notice "$count rows\n";
 
     $num_rows += $count;
-  } 
+  }
 }
 
 # fetch all sequences and current values
