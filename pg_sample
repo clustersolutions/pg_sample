@@ -549,11 +549,10 @@ while (my $row = lower_keys($sth->fetchrow_hashref)) {
         (SELECT   nspname AS schemaname, relname, reltuples::numeric
           FROM pg_class C LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
           WHERE   nspname NOT IN ('pg_catalog', 'information_schema')
-          AND  relkind='r' AND nspname IN ('analytics','audit','report','marketing','public')) a,
+          AND  relkind='r') a,
         (SELECT table_schema, table_name, column_name, ordinal_position, column_default
             FROM information_schema.columns
-            WHERE column_default LIKE '%nextval%'
-            AND table_schema IN ('public','analytics','audit','report','marketing')) b
+            WHERE column_default LIKE '%nextval%') b
         WHERE a.schemaname = b.table_schema
         AND a.relname = b.table_name
         AND a.schemaname = '$sname'
